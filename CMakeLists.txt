@@ -1,0 +1,12 @@
+cmake_minimum_required(VERSION 3.16)
+project(nova C)
+set(CMAKE_C_STANDARD 99)
+add_executable(novac compiler/novac.c)
+add_executable(novavm vm/novavm.c)
+target_compile_options(novac PRIVATE -O2 -Wall -Wextra)
+target_compile_options(novavm PRIVATE -O2 -Wall -Wextra)
+include(CTest)
+if(BUILD_TESTING)
+  add_subdirectory(tests)
+endif()
+
