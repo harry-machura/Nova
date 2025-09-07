@@ -539,15 +539,11 @@ static void parse_stmt(P* p){
 }
 
 static void parse_block(P* p){
-    scope_push(); // NEW: enter scope
-
     if(!accept(p, T_LB)) die_at(p->L, "expected '{' to start block");
     while(p->t.kind!=T_RB && p->t.kind!=T_EOF){
         parse_stmt(p);
     }
     expect(p, T_RB, "expected '}'");
-
-    scope_pop(); // NEW: leave scope
 }
 
 // File emission
@@ -656,46 +652,3 @@ int main(int argc, char** argv){
     return 0;
 }
 
-
-
-static void parse_logical_and(P* p) {
-
-    parse_equality(p);
-    while (match(p, T_ANDAND)) {
-        // Short-circuit AND: if lhs==0 -> result 0 else rhs
-        emit_op(p->out, OP_JZ); size_t jz_off = p->out->len; cb_w32(p->out, 0);
-        // evaluate rhs
-        parse_equality(p);
-        // jump over false push after rhs
-        emit_op(p->out, OP_JMP); size_t jmp_over_false = p->out->len; cb_w32(p->out, 0);
-        // false case:
-        size_t false_pc = p->out->len;
-        emit_op(p->out, OP_PUSHI); cb_w32(p->out, 0);
-        size_t end_pc = p->out->len;
-        // patch
-        // write absolute PCs (VM expects absolute pc indices per your format)
-        *(int32_t*)&p->out->data[jz_off+0] = (int32_t)false_pc;
-        *(int32_t*)&p->out->data[jmp_over_false+0] = (int32_t)end_pc;
-    }
-    
-}
-
-static void parse_logical_or(P* p) {
-
-    parse_logical_and(p);
-    while (match(p, T_OROR)) {
-        // Short-circuit OR: if lhs==0 -> rhs else 1
-        emit_op(p->out, OP_JZ); size_t jz_to_rhs = p->out->len; cb_w32(p->out, 0);
-        // lhs!=0 -> push 1 and skip rhs
-        emit_op(p->out, OP_PUSHI); cb_w32(p->out, 1);
-        emit_op(p->out, OP_JMP); size_t jmp_over_rhs = p->out->len; cb_w32(p->out, 0);
-        // rhs:
-        size_t rhs_pc = p->out->len;
-        parse_logical_and(p);
-        size_t end_pc = p->out->len;
-        // patch
-        *(int32_t*)&p->out->data[jz_to_rhs+0] = (int32_t)rhs_pc;
-        *(int32_t*)&p->out->data[jmp_over_rhs+0] = (int32_t)end_pc;
-    }
-    
-}
