@@ -61,15 +61,29 @@ static int lx_peek(Lexer* L){ return (L->pos<L->len)? (unsigned char)L->src[L->p
 static int lx_get(Lexer* L){ int c=lx_peek(L); if(c==-1) return -1; L->pos++; if(c=='\n') L->line++; return c; }
 static void lx_skip_ws(Lexer* L){
     for(;;){
-        int c=lx_peek(L);
-        if(c=='/' && L->pos+1<L->len && L->src[L->pos+1]=='/'){
+        // --- NEW: UTF-8 BOM am Dateianfang überspringen ---
+        if (L->pos == 0 && L->len >= 3 &&
+            (unsigned char)L->src[0] == 0xEF &&
+            (unsigned char)L->src[1] == 0xBB &&
+            (unsigned char)L->src[2] == 0xBF) {
+            L->pos = 3; // BOM überspringen
+        }
+
+        int c = lx_peek(L);
+
+        // --- NEW: NBSP (0xA0) als Whitespace behandeln ---
+        if (c == 0xA0) { lx_get(L); continue; }
+
+        // Line-Kommentare //... bis zum Zeilenende
+        if (c=='/' && L->pos+1<L->len && L->src[L->pos+1]=='/'){
             while((c=lx_get(L))!=-1 && c!='\n');
             continue;
         }
-        if(isspace(c)){ lx_get(L); continue; }
+        if (isspace(c)) { lx_get(L); continue; }
         break;
     }
 }
+
 
 static int is_ident_start(int c){ return isalpha(c)||c=='_'; }
 static int is_ident_cont(int c){ return isalnum(c)||c=='_'; }
@@ -102,26 +116,29 @@ static Token lx_next(Lexer* L){
     }
 
     // numbers
-    if(isdigit(c)){
-        int64_t v=0;
-        while(isdigit(lx_peek(L))){ v = v*10 + (lx_get(L)-'0'); }
-        t.kind=T_INT; t.ival=v; return t;
-    }
+if (isdigit(c)) {
+    int64_t v = lx_get(L) - '0';            // <-- erstes Zeichen konsumieren
+    while (isdigit(lx_peek(L))) { v = v*10 + (lx_get(L)-'0'); }
+    t.kind = T_INT; t.ival = v; return t;
+}
 
     // identifiers / keywords
-    if(is_ident_start(c)){
-        int i=0;
-        while(is_ident_cont(lx_peek(L)) && i<255){ t.text[i++]=(char)lx_get(L); }
-        t.text[i]=0;
-        if(strcmp(t.text,"let")==0) t.kind=K_LET;
-        else if(strcmp(t.text,"if")==0) t.kind=K_IF;
-        else if(strcmp(t.text,"else")==0) t.kind=K_ELSE;
-        else if(strcmp(t.text,"while")==0) t.kind=K_WHILE;
-        else if(strcmp(t.text,"print")==0) t.kind=K_PRINT;
-        else if(strcmp(t.text,"println")==0) t.kind=K_PRINTLN;
-        else t.kind=T_IDENT;
-        return t;
-    }
+    // identifiers / keywords
+if (is_ident_start(c)) {
+    int i = 0;
+    t.text[i++] = (char)lx_get(L);          // <-- erstes Zeichen konsumieren
+    while (is_ident_cont(lx_peek(L)) && i < 255) { t.text[i++] = (char)lx_get(L); }
+    t.text[i] = 0;
+    if (strcmp(t.text,"let")==0) t.kind=K_LET;
+    else if (strcmp(t.text,"if")==0) t.kind=K_IF;
+    else if (strcmp(t.text,"else")==0) t.kind=K_ELSE;
+    else if (strcmp(t.text,"while")==0) t.kind=K_WHILE;
+    else if (strcmp(t.text,"print")==0) t.kind=K_PRINT;
+    else if (strcmp(t.text,"println")==0) t.kind=K_PRINTLN;
+    else t.kind = T_IDENT;
+    return t;
+}
+
 
     // operators / punctuation
     c=lx_get(L);
@@ -160,7 +177,13 @@ static Token lx_next(Lexer* L){
             if(lx_peek(L)=='|'){ lx_get(L); t.kind=T_OROR; }
             else die_at(L,"single '|' not supported");
             break;
-        default: die_at(L,"unexpected character");
+        default: {
+    char m[64];
+    unsigned uc = (unsigned)c & 0xFF;
+    snprintf(m, sizeof(m), "unexpected character '%c' (0x%02X)",
+             (uc>=32&&uc<127)?uc:'?', uc);
+    die_at(L, m);
+}
     }
     return t;
 }

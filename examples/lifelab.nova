@@ -1,0 +1,89 @@
+// Rule 30 — 1D Cellular Automaton (VM-kompatibel)
+// Spracheinschränkung: keine Funktionen/Arrays/for/++, nur while/if/print.
+
+let WIDTH = 31;     // max 31 Spalten (passt in 32-bit int)
+let STEPS = 60;     // Zeilen
+
+// aktuelle und nächste Zeile (als Bitmaske)
+let cur = 0;
+let nxt = 0;
+
+// Start: einzelnes lebendes Bit in der Mitte
+let mid = WIDTH / 2;
+let i = 0;
+let p = 1;          // p = 2^mid
+while (i < mid) {
+  p = p * 2;
+  i = i + 1;
+}
+cur = p;
+
+// Hilfsvariablen
+let gen = 0;
+let x = 0;
+let pow = 1;
+let j = 0;
+
+while (gen < STEPS) {
+  // ----- Anzeige der aktuellen Zeile -----
+  x = 0;
+  while (x < WIDTH) {
+    // pow = 2^x
+    pow = 1;
+    j = 0;
+    while (j < x) {
+      pow = pow * 2;
+      j = j + 1;
+    }
+    // d = (cur / pow) % 2  -> Bit x
+    let d = (cur / pow) % 2;
+    if (d != 0) {
+      print("#");
+    } else {
+      print(".");
+    }
+    x = x + 1;
+  }
+  println("");
+
+  // ----- nächste Zeile berechnen (Rule 30) -----
+  nxt = 0;
+  x = 0;
+  while (x < WIDTH) {
+    // pow = 2^x
+    pow = 1;
+    j = 0;
+    while (j < x) {
+      pow = pow * 2;
+      j = j + 1;
+    }
+
+    // Nachbarn: l (x-1), s (x), r (x+1), außerhalb = 0
+    let l = 0;
+    if (x > 0) {
+      let pl = pow / 2;
+      l = (cur / pl) % 2;
+    }
+    let s = (cur / pow) % 2;
+    let r = 0;
+    if (x + 1 < WIDTH) {
+      let pr = pow * 2;
+      r = (cur / pr) % 2;
+    }
+
+    // Rule 30: new = l XOR (s OR r)
+    // s_or_r als 0/1 mit logischem OR:
+    let s_or_r = ((s != 0) || (r != 0));
+    let nd = (l + s_or_r) % 2;
+
+    // Bit setzen: nxt += nd * 2^x
+    nxt = nxt + nd * pow;
+
+    x = x + 1;
+  }
+
+  // Zeile weiterschieben
+  cur = nxt;
+  gen = gen + 1;
+}
+

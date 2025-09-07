@@ -1,0 +1,91 @@
+# ---------------------------
+# C/C++ & CMake (in/out-of-source)
+# ---------------------------
+# Build-Verzeichnisse (generell)
+build/
+_build*/
+build-*/
+cmake-build-*/
+
+# CMake Artefakte (falls jemand In-Source baut)
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.cmake
+DartConfiguration.tcl
+Makefile
+install_manifest.txt
+_compile_commands.json
+compile_commands.json
+CTestLaunchers.json
+Testing/
+
+# Ninja / Make / Generator-Kram
+*.ninja
+.ninja_log
+.ninja_deps
+
+# Objektdateien & statische/dynamische Libs
+*.o
+*.obj
+*.lo
+*.a
+*.la
+*.lib
+*.so
+*.so.*
+*.dylib
+*.dll
+*.d
+
+# Debug-/Symbol-Dateien
+*.pdb
+*.ipdb
+*.ilk
+*.dsym/
+*.dSYM/
+
+# Ausführbare Dateien / Programme
+*.exe
+*.out
+*.app
+# Falls jemand im Projektbaum baut:
+novac
+novavm
+
+# Coverage
+*.gcda
+*.gcno
+*.gcov
+coverage/
+lcov.info
+
+# Logs & temporäres
+*.log
+*.tmp
+*.swp
+*.swo
+
+# ---------------------------
+# Projektspezifisch (Nova)
+# ---------------------------
+# Nova-Bytecode/Compiler-Outputs nicht versionieren
+*.nvc
+
+# ---------------------------
+# IDE/Editor/OS
+# ---------------------------
+# VSCode / CLion / JetBrains
+.vscode/
+.idea/
+*.iml
+
+# Sonstiges
+.DS_Store
+Thumbs.db
+*.orig
+*.rej
+
+# Python-Venvs (falls Tools/Helper-Skripte genutzt werden)
+.venv/
+venv/
