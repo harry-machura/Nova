@@ -3,6 +3,7 @@ project(nova C)
 set(CMAKE_C_STANDARD 99)
 add_executable(novac
     compiler/emit.c
+    compiler/symtab.c
  compiler/novac.c)
 add_executable(novavm vm/novavm.c)
 target_compile_options(novac PRIVATE -O2 -Wall -Wextra)

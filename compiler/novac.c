@@ -21,6 +21,7 @@
 #include <stdint.h>
 #include "emit.h"
 #include "diag.h"
+#include "symtab.h"
 
 #define MAX_CODE  (1<<20)
 #define MAX_VARS  256
@@ -44,9 +45,6 @@ typedef enum {
 
 typedef struct { TokKind kind; char text[256]; int64_t ival; } Token;
 
-cb->len = 0;
-    /* kein cb->cap, weil CodeBuf diesen Member nicht hat */
-}
 
 static void lx_init(Lexer* L, const char* src){
     L->src=src; L->len=strlen(src); L->pos=0; L->line=1;
