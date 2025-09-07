@@ -36,7 +36,8 @@ typedef enum {
     // multi-char
     T_EQEQ=256, T_NEQ, T_LE, T_GE, T_ANDAND, T_OROR,
     // keywords
-    K_LET, K_IF, K_ELSE, K_WHILE, K_PRINT, K_PRINTLN
+    K_LET, K_IF, K_ELSE, K_WHILE, K_PRINT, K_PRINTLN,
+    K_FUNC, K_RETURN
 } TokKind;
 
 typedef struct { TokKind kind; char text[256]; int64_t ival; } Token;
@@ -46,6 +47,13 @@ typedef struct {
 } CodeBuf;
 
 static void cb_init(CodeBuf* b){ b->data=(uint8_t*)malloc(MAX_CODE); b->len=0; }
+static void cb_free(CodeBuf* cb){
+    if (!cb) return;
+    if (cb->data) { free(cb->data); cb->data = NULL; }
+    cb->len = 0;
+    /* kein cb->cap, weil CodeBuf diesen Member nicht hat */
+}
+
 static void cb_w8(CodeBuf* b, uint8_t v){ b->data[b->len++]=v; }
 static void cb_w32(CodeBuf* b, int32_t v){
     for(int i=0;i<4;i++) cb_w8(b, (uint8_t)((v>> (8*i)) & 0xFF));
@@ -135,6 +143,9 @@ if (is_ident_start(c)) {
     else if (strcmp(t.text,"while")==0) t.kind=K_WHILE;
     else if (strcmp(t.text,"print")==0) t.kind=K_PRINT;
     else if (strcmp(t.text,"println")==0) t.kind=K_PRINTLN;
+    else if (strcmp(t.text,"func")==0) t.kind=K_FUNC;
+    else if (strcmp(t.text,"return")==0) t.kind=K_RETURN;
+
     else t.kind = T_IDENT;
     return t;
 }
@@ -197,18 +208,44 @@ enum {
     OP_AND, OP_OR, OP_NOT,
     OP_JMP, OP_JZ,
     OP_LOAD, OP_STORE,
+    OP_CALL, OP_RET, OP_ARG,
     OP_PRINT, OP_PRINTLN
 };
+
 
 typedef struct {
     char name[64];
     int slot; // 0..255
 } Var;
 
+#define MAX_FUNCS 256
+
+typedef struct {
+    char name[64];
+    int  arity;     // Anzahl Parameter
+    int  addr;      // Code-Offset (Ziel für CALL)
+} Func;
+
 typedef struct {
     Var vars[MAX_VARS]; int nvars;
     char* strpool[MAX_STRS]; int nstrs;
+    Func funcs[MAX_FUNCS]; int nfuncs;
 } Env;
+
+static int env_find_func(Env* E, const char* name, int arity){
+    for(int i=0;i<E->nfuncs;i++){
+        if(E->funcs[i].arity==arity && strcmp(E->funcs[i].name,name)==0) return i;
+    }
+    return -1;
+}
+static int env_add_func(Env* E, const char* name, int arity, int addr){
+    if(E->nfuncs>=MAX_FUNCS) die("too many functions");
+    int id = E->nfuncs++;
+    snprintf(E->funcs[id].name, sizeof(E->funcs[id].name), "%s", name);
+    E->funcs[id].arity = arity;
+    E->funcs[id].addr  = addr;
+    return id;
+}
 
 static int env_find_var(Env* E, const char* name){
     for(int i=0;i<E->nvars;i++) if(strcmp(E->vars[i].name,name)==0) return E->vars[i].slot;
@@ -229,7 +266,11 @@ static int env_add_string(Env* E, const char* s){
 }
 
 // forward decls
-typedef struct { Lexer* L; Token t; CodeBuf* out; Env* env; } P;
+typedef struct {
+    Lexer* L; Token t; CodeBuf* out; Env* env;
+    char param_names[16][64]; int nparams;
+    int in_func; 
+} P;
 static void parse_stmt(P* p);
 static void parse_block(P* p);
 static void parse_expr(P* p);
@@ -253,14 +294,53 @@ static void parse_primary(P* p){
         emit(p, OP_PUSHSTR); emit32(p, id);
         next(p); return;
     }
-    if(p->t.kind==T_IDENT){
-        char name[256]; strncpy(name, p->t.text, sizeof(name));
+if(p->t.kind==T_IDENT){
+    char name[256]; strncpy(name, p->t.text, sizeof(name));
+    next(p);
+
+    // Funktionsaufruf? ident "(" args ")"
+    if (p->t.kind == T_LP) {
         next(p);
-        int slot = env_find_var(p->env, name);
-        if(slot<0){ char m[256]; snprintf(m,sizeof(m),"undefined variable '%.200s'", name); die_at(p->L, m); }
-        emit(p, OP_LOAD); emit32(p, slot);
+        // Argumente parsen
+        int argc = 0;
+        if (p->t.kind != T_RP) {
+            for(;;){
+                parse_expr(p); // Argument -> Stack
+                argc++;
+                if (!accept(p, T_COMMA)) break;
+            }
+        }
+        expect(p, T_RP, "expected ')'");
+        // Funktion lookup (belassen wir bis nach Definition möglich – Vorsicht: Forward geht hier NICHT)
+        int fid = env_find_func(p->env, name, argc);
+        if (fid < 0) {
+            char m[256]; snprintf(m,sizeof(m),"undefined function '%s/%d'", name, argc);
+            die_at(p->L, m);
+        }
+        // CALL absaddr, argc
+        emit(p, OP_CALL); emit32(p, p->env->funcs[fid].addr); emit32(p, argc);
         return;
     }
+
+    // In Funktion: ist es der Name eines Parameters? -> OP_ARG
+    if (p->in_func) {
+        for(int k=0;k<p->nparams;k++){
+            if(strcmp(p->param_names[k], name)==0){
+                emit(p, OP_ARG); emit32(p, k);
+                return;
+            }
+        }
+    }
+
+    // sonst: globale Variable laden
+    int slot = env_find_var(p->env, name);
+    if(slot<0){
+        char m[256]; snprintf(m,sizeof(m),"undefined variable '%s'", name); die_at(p->L, m);
+    }
+    emit(p, OP_LOAD); emit32(p, slot);
+    return;
+}
+
     if(accept(p, T_LP)){
         parse_expr(p);
         expect(p, T_RP, "expected ')'");
@@ -338,6 +418,46 @@ static void parse_expr(P* p){
     parse_or(p);
 }
 
+static void parse_func(P* p){
+    // "func" ident "(" [params] ")" block
+    if(!accept(p, K_FUNC)) die_at(p->L,"expected 'func'");
+    if(p->t.kind!=T_IDENT) die_at(p->L,"expected function name");
+    char fname[256]; strncpy(fname, p->t.text, sizeof(fname)); next(p);
+
+    expect(p, T_LP, "expected '('");
+    // Parameter
+    char params[16][64]; int nparams=0;
+    if(p->t.kind != T_RP){
+        for(;;){
+            if(p->t.kind!=T_IDENT) die_at(p->L,"expected parameter name");
+            strncpy(params[nparams++], p->t.text, 64);
+            next(p);
+            if(!accept(p, T_COMMA)) break;
+        }
+    }
+    expect(p, T_RP, "expected ')'");
+
+    // Adresse merken (Startpunkt der Funktion)
+    int addr = (int)p->out->len;
+    // Funktions-Signatur registrieren
+    env_add_func(p->env, fname, nparams, addr);
+
+    // Funktions-Kontext setzen (Parameternamen bekannt machen)
+    int old_in = p->in_func; p->in_func = 1;
+    int old_np = p->nparams; p->nparams = nparams;
+    for(int i=0;i<nparams;i++){ strncpy(p->param_names[i], params[i], 64); }
+
+    // Body
+    parse_block(p);
+
+    // Falls kein explizites return: implizit 'return;' (ohne Wert)
+    emit(p, OP_RET); emit32(p, 0);
+
+    // Kontext zurücksetzen
+    p->in_func = old_in; p->nparams = old_np;
+}
+
+
 // ---- Statements ----
 static void parse_stmt(P* p){
     if(accept(p, K_LET)){
@@ -413,6 +533,16 @@ static void parse_stmt(P* p){
         memcpy(p->out->data + jz_pos, &off, 4);
         return;
     }
+    if (accept(p, K_RETURN)) {
+    // optionaler Ausdruck
+    if (p->t.kind==T_RP || p->t.kind==T_RB || p->t.kind==T_EOF) {
+        emit(p, OP_RET); emit32(p, 0);
+    } else {
+        parse_expr(p);
+        emit(p, OP_RET); emit32(p, 1);
+    }
+    return;
+}
     if(accept(p, T_LB)){
         // block
         while(p->t.kind!=T_RB && p->t.kind!=T_EOF){
@@ -438,43 +568,103 @@ static void write_u32(FILE* f, uint32_t v){
 }
 
 int main(int argc, char** argv){
-    if(argc<3){
-        fprintf(stderr,"Usage: %s <input.nova> <output.nvc>\n", argv[0]);
-        return 2;
+    if(argc != 3){
+        fprintf(stderr, "usage: %s <input> <output>\n", argv[0]);
+        return 1;
     }
-    const char* in = argv[1];
-    const char* out = argv[2];
+    const char* inpath  = argv[1];
+    const char* outpath = argv[2];
 
-    // read file
-    FILE* fi = fopen(in, "rb"); if(!fi){ perror("open input"); return 1; }
-    fseek(fi, 0, SEEK_END); long n=ftell(fi); fseek(fi,0,SEEK_SET);
-    char* src = (char*)malloc(n+1);
-    if(!src){ fprintf(stderr,"oom\n"); fclose(fi); return 1; }
-    size_t rr = fread(src,1,n,fi); (void)rr; src[n]=0; fclose(fi);
+    // --- Quelle laden ---
+    FILE* fin = fopen(inpath, "rb");
+    if(!fin){ perror("open input"); return 1; }
+    fseek(fin, 0, SEEK_END);
+    long sz = ftell(fin);
+    fseek(fin, 0, SEEK_SET);
+    if(sz < 0){ fprintf(stderr,"ftell failed\n"); fclose(fin); return 1; }
+    char* src = (char*)malloc((size_t)sz + 1);
+    if(!src){ fprintf(stderr,"oom\n"); fclose(fin); return 1; }
+    if(fread(src, 1, (size_t)sz, fin) != (size_t)sz){ fprintf(stderr,"read failed\n"); fclose(fin); free(src); return 1; }
+    fclose(fin);
+    src[sz] = 0;
 
+    // --- Compiler-Strukturen vorbereiten ---
     Lexer L; lx_init(&L, src);
     CodeBuf cb; cb_init(&cb);
-    Env env; memset(&env,0,sizeof(env));
-    P p = { &L, {0}, &cb, &env };
+    Env env; memset(&env, 0, sizeof(env));
+
+    P p;
+    memset(&p, 0, sizeof(p));
+    p.L   = &L;
+    p.out = &cb;
+    p.env = &env;
+    p.in_func  = 0;
+    p.nparams  = 0;
+
     next(&p);
 
-    while(p.t.kind!=T_EOF){
+    // =====================================================================
+    //  Start-Jump einfügen, um Funktionsblöcke zu überspringen
+    // =====================================================================
+    emit(&p, OP_JMP);
+    size_t jmp_off_pos = p.out->len;  // Position der Offset-Bytes merken
+    emit32(&p, 0);                    // Platzhalter (4 Byte)
+
+    // =====================================================================
+    //  ZUERST: alle Funktionsdefinitionen einsammeln (vor dem Hauptprogramm)
+    // =====================================================================
+    while (p.t.kind == K_FUNC) {
+        parse_func(&p);
+    }
+
+    // =====================================================================
+    //  Jump-Offset patchen: jetzt kennen wir den Start des Hauptprogramms
+    // =====================================================================
+    {
+        int32_t rel = (int32_t)(p.out->len - jmp_off_pos - 4); // relative Distanz ab hinterem Ende der 4 Offset-Bytes
+        memcpy(p.out->data + jmp_off_pos, &rel, 4);
+    }
+
+    // =====================================================================
+    //  DANACH: normale Top-Level-Statements (Hauptprogramm)
+    // =====================================================================
+    while (p.t.kind != T_EOF) {
         parse_stmt(&p);
     }
     emit(&p, OP_HALT);
 
-    FILE* fo = fopen(out, "wb"); if(!fo){ perror("open output"); return 1; }
-    fwrite("NOVABC01",1,8,fo);
-    // strings
-    write_u32(fo, (uint32_t)env.nstrs);
+    // =====================================================================
+    //  Bytecode schreiben: MAGIC + Stringpool + Code
+    //  (Belasse dies ggf. wie in deiner Version, falls abweichend.)
+    // =====================================================================
+    FILE* fout = fopen(outpath, "wb");
+    if(!fout){ perror("open output"); free(src); cb_free(&cb); return 1; }
+
+    // Magic
+    const char magic[8] = { 'N','O','V','A','B','C','0','1' };
+    fwrite(magic, 1, 8, fout);
+
+    // String-Pool: [u32 nstrs] { [u32 len][bytes len] }*
+    uint32_t nstrs = (uint32_t)env.nstrs;
+    fwrite(&nstrs, 4, 1, fout);
     for(int i=0;i<env.nstrs;i++){
-        uint32_t len = (uint32_t)strlen(env.strpool[i]);
-        write_u32(fo, len);
-        fwrite(env.strpool[i],1,len,fo);
+        const char* s = env.strpool[i];
+        uint32_t slen = (uint32_t)strlen(s);
+        fwrite(&slen, 4, 1, fout);
+        fwrite(s, 1, slen, fout);
     }
-    // code
-    write_u32(fo, (uint32_t)cb.len);
-    fwrite(cb.data,1,cb.len,fo);
-    fclose(fo);
+
+    // Code: [u32 code_len][bytes]
+    uint32_t code_len = (uint32_t)cb.len;
+    fwrite(&code_len, 4, 1, fout);
+    fwrite(cb.data, 1, cb.len, fout);
+
+    fclose(fout);
+
+    // Aufräumen
+    cb_free(&cb);
+    free(src);
+
     return 0;
 }
+

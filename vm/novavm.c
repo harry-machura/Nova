@@ -12,6 +12,7 @@ enum {
     OP_AND, OP_OR, OP_NOT,
     OP_JMP, OP_JZ,
     OP_LOAD, OP_STORE,
+    OP_CALL, OP_RET, OP_ARG,
     OP_PRINT, OP_PRINTLN
 };
 
@@ -132,7 +133,9 @@ int main(int argc, char** argv){
     #define POP()    (stack[--sp])
     #define PUSH(x)  (stack[sp++]=(x))
     #define FETCHI32() ({ int32_t _v = read_i32(&code[pc]); pc+=4; _v; })
-
+    int32_t fp_stack[256];  int fsp = 0;
+    uint32_t rp_stack[256]; int rsp = 0;
+    int32_t fp = 0; 
     while(pc<n){
         uint8_t op = code[pc++];
         switch(op){
@@ -173,6 +176,35 @@ int main(int argc, char** argv){
                 }
                 if(op==OP_PRINTLN) fputc('\n', stdout);
             } break;
+            case OP_CALL: {
+    uint32_t tgt = (uint32_t)FETCHI32();   // absolute Code-Adresse (Offset im Bytecode)
+    int32_t argc = FETCHI32();
+    // push aktuelle Frame-/Return-Infos
+    fp_stack[fsp++] = fp;
+    rp_stack[rsp++] = pc;
+    // Neues Frame beginnt bei (sp - argc)
+    fp = sp - argc;
+    // Sprung in Funktion
+    pc = tgt;
+} break;
+
+case OP_RET: {
+    int32_t has_val = FETCHI32();  // 0 oder 1
+    int32_t retv = 0;
+    if (has_val) retv = POP();
+    // Stack zurückrollen: Argumente entfernen
+    sp = fp;
+    // Frame/Return wiederherstellen
+    fp = fp_stack[--fsp];
+    pc = rp_stack[--rsp];
+    if (has_val) PUSH(retv);
+} break;
+
+case OP_ARG: {
+    int32_t idx = FETCHI32();    // 0..argc-1
+    PUSH(stack[fp + idx]);
+} break;
+
             default:
                 fprintf(stderr,"unknown opcode %u at pc=%u\n", op, pc-1);
                 free_program(pr); return 1;

@@ -1,0 +1,4 @@
+func add(a,b){ return a + b }
+let x = 0
+x = add(2,3)
+println(x)
