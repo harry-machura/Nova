@@ -19,8 +19,6 @@
 #include <string.h>
 #include <ctype.h>
 #include <stdint.h>
-#include "emit.h"
-#include "diag.h"
 
 #define MAX_CODE  (1<<20)
 #define MAX_VARS  256
@@ -44,9 +42,25 @@ typedef enum {
 
 typedef struct { TokKind kind; char text[256]; int64_t ival; } Token;
 
-cb->len = 0;
+typedef struct {
+    uint8_t* data; size_t len;
+} CodeBuf;
+
+static void cb_init(CodeBuf* b){ b->data=(uint8_t*)malloc(MAX_CODE); b->len=0; }
+static void cb_free(CodeBuf* cb){
+    if (!cb) return;
+    if (cb->data) { free(cb->data); cb->data = NULL; }
+    cb->len = 0;
     /* kein cb->cap, weil CodeBuf diesen Member nicht hat */
 }
+
+static void cb_w8(CodeBuf* b, uint8_t v){ b->data[b->len++]=v; }
+static void cb_w32(CodeBuf* b, int32_t v){
+    for(int i=0;i<4;i++) cb_w8(b, (uint8_t)((v>> (8*i)) & 0xFF));
+}
+
+static void die(const char* msg){ fprintf(stderr,"error: %s\n", msg); exit(1); }
+static void die_at(Lexer* L, const char* msg){ fprintf(stderr,"error(line %d): %s\n", L->line, msg); exit(1); }
 
 static void lx_init(Lexer* L, const char* src){
     L->src=src; L->len=strlen(src); L->pos=0; L->line=1;
